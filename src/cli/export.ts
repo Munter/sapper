@@ -7,6 +7,7 @@ import URL from 'url-parse';
 import fetch from 'node-fetch';
 import * as ports from 'port-authority';
 import { dest } from '../config';
+import AssetGraph from 'assetgraph-builder';
 
 const app = express();
 
@@ -91,5 +92,40 @@ export default async function exporter(export_dir: string) {
 
 	return ports.wait(port)
 		.then(() => handle(new URL(origin))) // TODO all static routes
+		.then(async function() {
+			const outputDir = 'file://' + path.resolve(process.cwd(), `${export_dir}_ag`);
+
+			const graph = new AssetGraph({ root: origin });
+
+			graph.disableFetch = false;
+
+			await graph.logEvents();
+
+			await graph.loadAssets('/');
+
+			await graph.populate({
+				followRelations: {
+					crossorigin: false
+				}
+			});
+
+			await graph.mergeIdenticalAssets({
+				type: 'Html',
+				isInline: false,
+				isLoaded: true
+			});
+
+			const allAssets = graph.findAssets({ isLoaded: true, isInline: false });
+
+			for (const asset of allAssets) {
+				asset.url = asset.url.replace(origin, outputDir);
+
+				if (asset.type === 'Html' && !asset.url.endsWith('.html')) {
+					asset.url = asset.url.replace(/\/?$/, '/index.html');
+				}
+			}
+
+			await graph.writeAssetsToDisc({ isLoaded: true });
+		})
 		.then(() => proc.kill());
 }
